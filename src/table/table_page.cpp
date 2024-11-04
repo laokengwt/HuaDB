@@ -31,23 +31,39 @@ slotid_t TablePage::InsertRecord(std::shared_ptr<Record> record, xid_t xid, cid_
   // 在记录头添加事务信息（xid 和 cid）
   // LAB 3 BEGIN
 
-  // 维护 lower 和 upper 指针
-  // 设置 slots 数组
-  // 将 record 写入 page data
-  // 将 page 标记为 dirty
-  // 返回插入的 slot id
   // LAB 1 BEGIN
-  return 0;
+  slotid_t slot_id = GetRecordCount();
+  // lower需要往后移动一个槽的大小;upper需要往前移动一个记录的大小
+  Slot *slot = reinterpret_cast<Slot *>(page_data_ + *lower_);
+  slot->size_ = record->GetSize();
+  // 维护 lower 和 upper 指针
+  *lower_ += sizeof(Slot);
+  *upper_ -= slot->size_;
+  // 设置 slots 数组
+  slot->offset_ = *upper_;
+  char *record_begin = reinterpret_cast<char *>(page_data_ + *upper_);
+  // 将 record 写入 page data
+  record->SerializeTo(record_begin);
+  // 将 page 标记为 dirty
+  page_->SetDirty();
+  // 返回插入的 slot id
+  return slot_id;
 }
 
 void TablePage::DeleteRecord(slotid_t slot_id, xid_t xid) {
   // 更改实验 1 的实现，改为通过 xid 标记删除
   // LAB 3 BEGIN
 
-  // 将 slot_id 对应的 record 标记为删除
-  // 可使用 Record::DeserializeHeaderFrom 函数读取记录头
-  // 将 page 标记为 dirty
   // LAB 1 BEGIN
+  // 利用slot_id计算record_data所在位置并获取record
+  Slot *slot = slots_ + slot_id;
+  char *record_data = reinterpret_cast<char *>(page_data_ + slot->offset_);
+  std::unique_ptr<Record> record = std::make_unique<Record>();
+  // 可使用 Record::DeserializeHeaderFrom 函数读取记录头
+  record->DeserializeHeaderFrom(record_data);
+  // 将 slot_id 对应的 record 标记为删除
+  record->SetDeleted(true);
+  record->SerializeHeaderTo(record_data);
 }
 
 void TablePage::UpdateRecordInPlace(const Record &record, slotid_t slot_id) {
@@ -56,10 +72,15 @@ void TablePage::UpdateRecordInPlace(const Record &record, slotid_t slot_id) {
 }
 
 std::shared_ptr<Record> TablePage::GetRecord(Rid rid, const ColumnList &column_list) {
-  // 根据 slot_id 获取 record
-  // 新建 record 并设置 rid
   // LAB 1 BEGIN
-  return nullptr;
+  // 新建 record 并设置 rid
+  std::shared_ptr<Record> record = std::shared_ptr<Record>(new Record());
+  record->SetRid(rid);
+  // 根据 slot_id 获取 record
+  // slot_id -> record_data_begin_ptr
+  char *record_begin = reinterpret_cast<char *>(page_data_ + slots_[rid.slot_id_].offset_);
+  record->DeserializeFrom(record_begin, column_list);
+  return record;
 }
 
 void TablePage::UndoDeleteRecord(slotid_t slot_id) {

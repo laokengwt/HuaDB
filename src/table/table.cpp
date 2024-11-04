@@ -29,15 +29,39 @@ Rid Table::InsertRecord(std::shared_ptr<Record> record, xid_t xid, cid_t cid, bo
   // 设置页面的 page lsn
   // LAB 2 BEGIN
 
-  // 使用 buffer_pool_ 获取页面
-  // 使用 TablePage 类操作记录页面
-  // 遍历表的页面，判断页面是否有足够的空间插入记录，如果没有则通过 buffer_pool_ 创建新页面
-  // 如果 first_page_id_ 为 NULL_PAGE_ID，说明表还没有页面，需要创建新页面
-  // 创建新页面时需设置前一个页面的 next_page_id，并将新页面初始化
-  // 找到空间足够的页面后，通过 TablePage 插入记录
-  // 返回插入记录的 rid
   // LAB 1 BEGIN
-  return {0, 0};
+  // 在实验初始的Table初始化时，first_page_id_的值会被初始化为NULL_PAGE_ID，导致下面的GetPage函数执行失败
+  // 即在GetPage前，需要正确的对first_page_id_进行初始化，即需要对其进行检查
+  // 如果first_page_id_ == NULL_PAGE_ID，说明Table中还没有Page来存数据，则需要进行NewPage和对Page的Init操作
+  if (first_page_id_ == NULL_PAGE_ID) {
+    first_page_id_ = 0;
+    auto new_page = buffer_pool_.NewPage(db_oid_, oid_, first_page_id_);
+    auto new_table_page = std::make_unique<TablePage>(new_page);
+    new_table_page->Init();
+  }
+  // 使用 buffer_pool_ 获取页面
+  pageid_t page_id = first_page_id_;
+  auto page = buffer_pool_.GetPage(db_oid_, oid_, first_page_id_);
+  // 使用 TablePage 类操作记录页面
+  auto table_page = std::make_unique<TablePage>(page);
+  // 遍历表的页面，判断页面是否有足够的空间插入记录，如果没有则通过 buffer_pool_ 创建新页面
+  while (table_page->GetFreeSpaceSize() < record->GetSize() && table_page->GetNextPageId() != NULL_PAGE_ID) {
+    page_id++;
+    page = buffer_pool_.GetPage(db_oid_, oid_, page_id);
+    table_page = std::make_unique<TablePage>(page);
+  }
+  // 如果 first_page_id_ 为 NULL_PAGE_ID，说明表还没有页面，需要创建新页面
+  if (table_page->GetFreeSpaceSize() < record->GetSize() && table_page->GetNextPageId() == NULL_PAGE_ID) {
+    page_id++;
+    // 创建新页面时需设置前一个页面的 next_page_id，并将新页面初始化
+    table_page->SetNextPageId(page_id);
+    table_page = std::make_unique<TablePage>(buffer_pool_.NewPage(db_oid_, oid_, page_id));
+    table_page->Init();
+  }
+  // 找到空间足够的页面后，通过 TablePage 插入记录
+  slotid_t slot_id = table_page->InsertRecord(record, xid, cid);
+  // 返回插入记录的 rid
+  return {page_id, slot_id};
 }
 
 void Table::DeleteRecord(const Rid &rid, xid_t xid, bool write_log) {
@@ -45,8 +69,11 @@ void Table::DeleteRecord(const Rid &rid, xid_t xid, bool write_log) {
   // 设置页面的 page lsn
   // LAB 2 BEGIN
 
-  // 使用 TablePage 操作页面
   // LAB 1 BEGIN
+  // 获取TablePage
+  auto table_page = std::make_unique<TablePage>(buffer_pool_.GetPage(this->db_oid_, this->oid_, rid.page_id_));
+  // 使用 TablePage 操作页面
+  table_page->DeleteRecord(rid.slot_id_, xid);
 }
 
 Rid Table::UpdateRecord(const Rid &rid, xid_t xid, cid_t cid, std::shared_ptr<Record> record, bool write_log) {
